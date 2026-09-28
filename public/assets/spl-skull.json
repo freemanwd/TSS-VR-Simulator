@@ -1,0 +1,10 @@
+{
+  "dataset": "SPL Head and Neck Atlas",
+  "source_url": "https://www.openanatomy.org/atlases/nac/head-neck-2016-09.zip",
+  "license": "3D Slicer License section B",
+  "source_model": "head-neck-2016-09/models/Model_10_skull.vtk",
+  "vertices": 187287,
+  "faces": 375534,
+  "processing": "source surface centered; optional topology-preserving decimation; no anatomical warping",
+  "note": "Reference atlas geometry from a different subject than NasalSeg; not a registered patient-specific composite."
+}
