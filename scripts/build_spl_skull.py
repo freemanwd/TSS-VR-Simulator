@@ -39,8 +39,10 @@ try:
     else: mesh=trimesh.load(tmp,force="mesh",process=True)
 finally: os.unlink(tmp)
 # Reduce payload while retaining the source surface; no non-rigid transformation.
-if len(mesh.faces)>120000:
-    try: mesh=mesh.simplify_quadric_decimation(face_count=90000)
+if len(mesh.faces)>70000:
+    try:
+        mesh=mesh.simplify_quadric_decimation(face_count=60000)
+        print("Decimated skull to", len(mesh.faces), "faces")
     except Exception as e: print("Decimation skipped",e)
 mesh.apply_translation(-mesh.bounding_box.centroid)
 scene=trimesh.Scene();scene.add_geometry(mesh,node_name="SPL_CT_skull",geom_name="CT-derived skull")
@@ -52,3 +54,5 @@ print(meta)
 # v0.3 build trigger
 
 # vtk pipeline trigger
+
+# v0.4 mobile optimization trigger
