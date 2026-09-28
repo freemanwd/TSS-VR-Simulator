@@ -1,0 +1,26 @@
+name: Build NasalSeg anatomy asset
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "scripts/build_nasalseg.py"
+permissions:
+  contents: write
+jobs:
+  build:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install numpy pynrrd scikit-image trimesh
+      - run: python scripts/build_nasalseg.py
+      - name: Commit derived browser asset
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/assets/nasalseg-case.glb public/assets/nasalseg-case.json
+          git diff --cached --quiet || git commit -m "data: add CT-derived NasalSeg browser mesh"
+          git push
