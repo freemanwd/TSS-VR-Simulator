@@ -5,7 +5,9 @@ This keeps source geometry proportions and only centers/scales at display time.
 """
 from pathlib import Path
 import json, tempfile, urllib.request, zipfile, re, os
-import numpy as np, trimesh, meshio
+import numpy as np, trimesh
+import vtk
+from vtk.util.numpy_support import vtk_to_numpy
 
 URL="https://www.openanatomy.org/atlases/nac/head-neck-2016-09.zip"
 OUT=Path("public/assets"); OUT.mkdir(parents=True,exist_ok=True)
@@ -28,12 +30,12 @@ suffix=Path(chosen).suffix.lower()
 with tempfile.NamedTemporaryFile(suffix=suffix,delete=False) as f: f.write(raw); tmp=f.name
 try:
     if suffix==".vtk":
-        m=meshio.read(tmp)
-        tri=None
-        for block in m.cells:
-            if block.type=="triangle": tri=block.data if tri is None else np.vstack([tri,block.data])
-        if tri is None: raise RuntimeError("VTK skull model contains no triangles")
-        mesh=trimesh.Trimesh(vertices=m.points[:,:3],faces=tri,process=True)
+        reader=vtk.vtkPolyDataReader(); reader.SetFileName(tmp); reader.Update()
+        poly=reader.GetOutput()
+        triang=vtk.vtkTriangleFilter(); triang.SetInputData(poly); triang.Update(); poly=triang.GetOutput()
+        verts=vtk_to_numpy(poly.GetPoints().GetData())
+        arr=vtk_to_numpy(poly.GetPolys().GetData()).reshape(-1,4)
+        mesh=trimesh.Trimesh(vertices=verts,faces=arr[:,1:4],process=True)
     else: mesh=trimesh.load(tmp,force="mesh",process=True)
 finally: os.unlink(tmp)
 # Reduce payload while retaining the source surface; no non-rigid transformation.
