@@ -1,0 +1,1 @@
+{"name":"tss-vr-simulator","version":"0.1.0","private":true,"description":"Browser-based synthetic transsphenoidal surgery VR simulation research prototype","scripts":{"build":"mkdir -p dist && cp index.html app.js dist/"},"engines":{"node":">=20"}}
