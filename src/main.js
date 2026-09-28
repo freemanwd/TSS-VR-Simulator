@@ -4,14 +4,14 @@ import { VRButton } from 'three/addons/webxr/VRButton.js';
 import './style.css';
 
 const app=document.querySelector('#app');
-app.innerHTML=`<header><div><b>STR-X / TSS VR SIMULATOR</b><small>SKULL-BASE MILESTONE · v0.3</small></div><div class="source">Nasal corridor: NasalSeg CT segmentation</div></header>
+app.innerHTML=`<header><div><b>STR-X / TSS VR SIMULATOR</b><small>OPERATIVE CORRIDOR · v0.4</small></div><div class="source">Nasal corridor: NasalSeg CT segmentation</div></header>
 <main><section id="stage"><canvas id="view"></canvas><div class="scope"></div><div class="topHUD"><span id="mode">ENDOSCOPIC · <b id="optic">0°</b></span><span id="assetState">LOADING CT-DERIVED ANATOMY…</span></div><div class="crosshair">+</div><div class="nav"><button id="withdraw">− Withdraw</button><div><button id="angle">0° / 30°</button><button id="instrument">Instrument</button></div><button id="advance">Advance +</button></div></section>
 <aside><div class="eyebrow">TSS CORRIDOR</div><h1>Endonasal → sphenoid → sella</h1><p id="note">The nasal corridor is derived from a published CT segmentation. Deep sellar structures are an educational reconstruction and are visually distinguished.</p>
 <div class="meter"><div><span>DEPTH</span><b id="depth">0%</b></div><div><span>REGION</span><b id="region">Nasal vestibule</b></div></div>
 <div class="tabs"><button class="active" data-view="scope">Endoscope</button><button data-view="atlas">Atlas</button></div>
 <h3>Structures</h3><div id="structures"></div>
 <div class="legend"><i class="real"></i><span>CT-derived NasalSeg geometry</span><i class="recon"></i><span>Educational reconstruction</span></div>
-<div class="warning"><b>Research / education only.</b> Not patient-specific, clinically validated, or a procedural guide. Geometry labeled “reconstruction” is not derived from NasalSeg.</div>
+<div id="coach" class="coach"><b>COACH</b><span>Advance slowly. Identify each landmark in sequence.</span></div><div class="score"><div><span>LANDMARKS</span><b id="landmarkScore">0 / 6</b></div><div><span>SAFETY EVENTS</span><b id="safetyScore">0</b></div><div><span>PATH</span><b id="pathScore">0.0</b></div></div><button id="resetRun" class="reset">Reset training run</button><div class="warning"><b>Research / education only.</b> Not patient-specific, clinically validated, or a procedural guide. Geometry labeled “reconstruction” is not derived from NasalSeg.</div>
 <a class="credit" href="https://doi.org/10.5281/zenodo.13893419" target="_blank">NasalSeg · DOI 10.5281/zenodo.13893419 ↗</a></aside></main>`;
 
 const canvas=document.querySelector('#view'),renderer=new THREE.WebGLRenderer({canvas,antialias:true});
@@ -22,6 +22,15 @@ camera.add(new THREE.PointLight(0xfff1dc,5,30,2));scene.add(new THREE.Hemisphere
 const root=new THREE.Group();scene.add(root);
 let depth=0, viewMode='scope', yaw=0,pitch=0,drag=null,realLoaded=false,optic30=false,instrumentOn=false;
 const structureUI=document.querySelector('#structures');
+const phases=[
+ {name:'Nasal entry',at:.06,target:'Nasal vestibule',hint:'Orient to the nasal corridor; avoid forcing the camera against the wall.'},
+ {name:'Nasal corridor',at:.28,target:'Nasal cavity',hint:'Maintain a centered endoscopic path and identify the nasal cavity.'},
+ {name:'Posterior corridor',at:.50,target:'Posterior choana',hint:'Recognize the posterior transition before turning toward the sphenoid target.'},
+ {name:'Sphenoid target',at:.66,target:'Sphenoid corridor',hint:'Educational reconstruction begins here; identify the sphenoid target.'},
+ {name:'Sphenoid sinus',at:.80,target:'Sphenoid sinus',hint:'Orient to the reconstructed sellar face and lateral carotid danger zones.'},
+ {name:'Sellar face',at:.92,target:'Sellar face',hint:'Identify sellar face; maintain awareness of ICA and optic danger zones.'}
+];
+let found=new Set(),safetyEvents=0,pathLength=0,lastDepth=0;
 const structures=[
  ['skull','CT skull reference','real'],['nasal','Nasal cavities','real'],['pharynx','Nasopharynx','real'],['sphenoid','Sphenoid sinus','recon'],['sella','Sellar face','recon'],['ica','Paraclival ICA','recon'],['optic','Optic apparatus','recon'],['pituitary','Pituitary / lesion','recon']
 ];
@@ -78,9 +87,25 @@ function updateCamera(){
  camera.updateProjectionMatrix();
  groups.sphenoid.visible=depth>.56||viewMode==='atlas';groups.sella.visible=depth>.72||viewMode==='atlas';groups.ica.visible=depth>.72||viewMode==='atlas';groups.optic.visible=depth>.78||viewMode==='atlas';groups.pituitary.visible=depth>.91||viewMode==='atlas';
 }
-function move(v){depth=THREE.MathUtils.clamp(depth+v,0,1);updateCamera()}document.querySelector('#advance').onclick=()=>move(.025);document.querySelector('#withdraw').onclick=()=>move(-.025);document.querySelector('#angle').onclick=()=>{optic30=!optic30;document.querySelector('#optic').textContent=optic30?'30°':'0°';updateCamera()};document.querySelector('#instrument').onclick=()=>{instrumentOn=!instrumentOn;instrument.visible=instrumentOn};
+function move(v){const before=depth;depth=THREE.MathUtils.clamp(depth+v,0,1);pathLength+=Math.abs(depth-before)*21;document.querySelector('#pathScore').textContent=pathLength.toFixed(1);checkTraining();updateCamera()}
+function checkTraining(){
+ const idx=phases.findIndex((p,i)=>depth>=p.at && (i===phases.length-1||depth<phases[i+1].at));
+ const phase=phases[Math.max(0,idx)],coach=document.querySelector('#coach');
+ if(phase){coach.querySelector('span').textContent=phase.hint;if(Math.abs(depth-phase.at)<.045)found.add(Math.max(0,idx));}
+ // Proximity events are simulator danger-zone events, not validated collision physics.
+ if(depth>.79){
+   const lateral=Math.abs(Math.sin(yaw)*1.7);
+   if(lateral>1.25 && !window.__dangerLatch){safetyEvents++;window.__dangerLatch=true;coach.classList.add('danger');coach.querySelector('span').textContent='Danger-zone proximity: reconstructed paraclival ICA. Re-center before advancing.';}
+   if(lateral<.9){window.__dangerLatch=false;coach.classList.remove('danger');}
+ }
+ document.querySelector('#landmarkScore').textContent=found.size+' / '+phases.length;
+ document.querySelector('#safetyScore').textContent=safetyEvents;
+}
+document.querySelector('#resetRun').onclick=()=>{depth=0;yaw=0;pitch=0;found.clear();safetyEvents=0;pathLength=0;window.__dangerLatch=false;document.querySelector('#landmarkScore').textContent='0 / 6';document.querySelector('#safetyScore').textContent='0';document.querySelector('#pathScore').textContent='0.0';document.querySelector('#coach').classList.remove('danger');checkTraining();updateCamera();};
+
+document.querySelector('#advance').onclick=()=>move(.025);document.querySelector('#withdraw').onclick=()=>move(-.025);document.querySelector('#angle').onclick=()=>{optic30=!optic30;document.querySelector('#optic').textContent=optic30?'30°':'0°';updateCamera()};document.querySelector('#instrument').onclick=()=>{instrumentOn=!instrumentOn;instrument.visible=instrumentOn};
 document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{viewMode=b.dataset.view;document.querySelectorAll('.tabs button').forEach(x=>x.classList.toggle('active',x===b));document.querySelector('#mode').textContent=viewMode==='scope'?'ENDOSCOPIC · 0°':'ATLAS · CUTAWAY';updateCamera()});
 structureUI.onclick=e=>{const b=e.target.closest('button');if(!b)return;const g=groups[b.dataset.id];g.visible=!g.visible;b.classList.toggle('off',!g.visible)};
 canvas.onpointerdown=e=>{drag=[e.clientX,e.clientY];canvas.setPointerCapture(e.pointerId)};canvas.onpointermove=e=>{if(!drag)return;yaw+= (e.clientX-drag[0])*.005;pitch=THREE.MathUtils.clamp(pitch-(e.clientY-drag[1])*.004,-.7,.7);drag=[e.clientX,e.clientY];updateCamera()};canvas.onpointerup=()=>drag=null;
 addEventListener('keydown',e=>{if(e.key.toLowerCase()==='w')move(.015);if(e.key.toLowerCase()==='s')move(-.015)});
-function loop(){renderer.render(scene,camera)}renderer.setAnimationLoop(loop);updateCamera();resize();
+function loop(){renderer.render(scene,camera)}renderer.setAnimationLoop(loop);checkTraining();updateCamera();resize();
