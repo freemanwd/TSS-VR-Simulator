@@ -31,3 +31,12 @@ The SPL skull and NasalSeg nasal cavity are from **different source subjects**. 
 ## v0.3 interaction layer
 
 The endoscope optics (0°/30°), instrument shaft, sphenoid/sellar reconstruction, ICA, optic apparatus, pituitary and lesion are simulation components. They are not asserted to be source-dataset segmentations. WebXR is an interaction/rendering mode only.
+
+
+## v0.4 operative-corridor training
+
+v0.4 adds a staged training state machine (nasal entry, nasal corridor, posterior corridor, sphenoid target, sphenoid sinus, sellar face), a simulated instrument, path-length telemetry, landmark completion, and reconstructed ICA danger-zone proximity events.
+
+These metrics are **prototype interaction metrics only**. They have not been validated as measures of surgical skill, competency, safety, or credentialing. The sphenoid, sellar, ICA, optic, pituitary, and lesion models remain explicitly reconstructed until a compatible open segmentation source is integrated and anatomically registered.
+
+The CT-derived SPL skull and NasalSeg P001 nasal segmentation remain different-subject reference sources and must not be described as a single patient-specific anatomy.
