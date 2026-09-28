@@ -1,0 +1,15 @@
+{
+  "dataset": "NasalSeg",
+  "doi": "10.5281/zenodo.13893419",
+  "source_url": "https://zenodo.org/records/13893419/files/NasalSeg.zip?download=1",
+  "case_file": "labels/P001_seg.nrrd",
+  "labels": {
+    "3": "right nasal cavity",
+    "4": "left nasal cavity",
+    "5": "nasopharynx"
+  },
+  "vertices": 4928,
+  "faces": 10250,
+  "processing": "marching cubes step_size=3; centered; no anatomical warping",
+  "note": "Representative research case; not a normative atlas or patient-specific model."
+}
