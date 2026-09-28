@@ -46,3 +46,5 @@ scene=trimesh.Scene();scene.add_geometry(mesh,node_name="SPL_CT_skull",geom_name
 meta={"dataset":"SPL Head and Neck Atlas","source_url":URL,"license":"3D Slicer License section B","source_model":chosen,"vertices":int(len(mesh.vertices)),"faces":int(len(mesh.faces)),"processing":"source surface centered; optional topology-preserving decimation; no anatomical warping","note":"Reference atlas geometry from a different subject than NasalSeg; not a registered patient-specific composite."}
 (OUT/"spl-skull.json").write_text(json.dumps(meta,indent=2))
 print(meta)
+
+# v0.3 build trigger
