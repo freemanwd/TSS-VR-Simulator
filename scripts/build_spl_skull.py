@@ -56,3 +56,5 @@ print(meta)
 # vtk pipeline trigger
 
 # v0.4 mobile optimization trigger
+
+# v0.4 optimized asset rerun
