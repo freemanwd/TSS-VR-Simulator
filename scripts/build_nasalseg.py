@@ -46,4 +46,5 @@ scene.add_geometry(mesh,node_name="NasalSeg_labels_3_4_5",geom_name="Nasal cavit
 (OUT/"nasalseg-case.glb").write_bytes(scene.export(file_type="glb"))
 meta={"dataset":"NasalSeg","doi":"10.5281/zenodo.13893419","source_url":URL,"case_file":case,"labels":{"3":"right nasal cavity","4":"left nasal cavity","5":"nasopharynx"},"vertices":int(len(mesh.vertices)),"faces":int(len(mesh.faces)),"processing":"marching cubes step_size=3; centered; no anatomical warping","note":"Representative research case; not a normative atlas or patient-specific model."}
 (OUT/"nasalseg-case.json").write_text(json.dumps(meta,indent=2))
-print("Wrote", OUT/"nasalseg-case.glb")\nprint(meta)
+print("Wrote", OUT/"nasalseg-case.glb")
+print(meta)
