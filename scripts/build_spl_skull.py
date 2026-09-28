@@ -50,3 +50,5 @@ meta={"dataset":"SPL Head and Neck Atlas","source_url":URL,"license":"3D Slicer 
 print(meta)
 
 # v0.3 build trigger
+
+# vtk pipeline trigger
