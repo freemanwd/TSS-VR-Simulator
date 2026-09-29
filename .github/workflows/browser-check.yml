@@ -8,7 +8,7 @@ permissions:
 jobs:
   browser:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -30,5 +30,41 @@ jobs:
         if: always()
         with:
           name: browser-results
+          path: browser-results
+          retention-days: 7
+      - name: Wait for updated public production deployment
+        if: github.ref == 'refs/heads/main'
+        run: |
+          python - <<'PY'
+          import time
+          from playwright.sync_api import sync_playwright
+          with sync_playwright() as p:
+              browser=p.chromium.launch(headless=True,args=['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader'])
+              page=browser.new_page()
+              success=False
+              for attempt in range(24):
+                  try:
+                      page.goto('https://tss-vr-simulator.vercel.app/?verify=0.4.2',wait_until='networkidle',timeout=25000)
+                      page.wait_for_function('window.__tss?.snapshot().version === "0.4.2" && window.__tss.snapshot().ready',timeout=15000)
+                      print('PRODUCTION_READY',page.evaluate('__tss.snapshot()'))
+                      success=True
+                      break
+                  except Exception as e:
+                      print('Waiting for production',attempt+1,str(e)[:160])
+                      time.sleep(10)
+              browser.close()
+              if not success: raise RuntimeError('The updated production renderer did not become ready within the verification window')
+          PY
+      - name: Verify live public anatomy and navigation
+        if: github.ref == 'refs/heads/main'
+        env:
+          BASE_URL: https://tss-vr-simulator.vercel.app
+        run: |
+          mv browser-results local-browser-results
+          python browser-test.py
+      - uses: actions/upload-artifact@v4
+        if: always() && github.ref == 'refs/heads/main'
+        with:
+          name: live-browser-results
           path: browser-results
           retention-days: 7
