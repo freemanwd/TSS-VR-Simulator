@@ -1,111 +1,221 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { VRButton } from 'three/addons/webxr/VRButton.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import routeData from './nasal-route.json';
 import './style.css';
 
-const app=document.querySelector('#app');
-app.innerHTML=`<header><div><b>STR-X / TSS VR SIMULATOR</b><small>OPERATIVE CORRIDOR · v0.4</small></div><div class="source">Nasal corridor: NasalSeg CT segmentation</div></header>
-<main><section id="stage"><canvas id="view"></canvas><div class="scope"></div><div class="topHUD"><span id="mode">ENDOSCOPIC · <b id="optic">0°</b></span><span id="assetState">LOADING CT-DERIVED ANATOMY…</span></div><div class="crosshair">+</div><div class="nav"><button id="withdraw">− Withdraw</button><div><button id="angle">0° / 30°</button><button id="instrument">Instrument</button></div><button id="advance">Advance +</button></div></section>
-<aside><div class="eyebrow">TSS CORRIDOR</div><h1>Endonasal → sphenoid → sella</h1><p id="note">The nasal corridor is derived from a published CT segmentation. Deep sellar structures are an educational reconstruction and are visually distinguished.</p>
-<div class="meter"><div><span>DEPTH</span><b id="depth">0%</b></div><div><span>REGION</span><b id="region">Nasal vestibule</b></div></div>
-<div class="tabs"><button class="active" data-view="scope">Endoscope</button><button data-view="atlas">Atlas</button></div>
-<h3>Structures</h3><div id="structures"></div>
-<div class="legend"><i class="real"></i><span>CT-derived NasalSeg geometry</span><i class="recon"></i><span>Educational reconstruction</span></div>
-<div id="coach" class="coach"><b>COACH</b><span>Advance slowly. Identify each landmark in sequence.</span></div><div class="score"><div><span>LANDMARKS</span><b id="landmarkScore">0 / 6</b></div><div><span>SAFETY EVENTS</span><b id="safetyScore">0</b></div><div><span>PATH</span><b id="pathScore">0.0</b></div></div><button id="resetRun" class="reset">Reset training run</button><div class="warning"><b>Research / education only.</b> Not patient-specific, clinically validated, or a procedural guide. Geometry labeled “reconstruction” is not derived from NasalSeg.</div>
-<a class="credit" href="https://doi.org/10.5281/zenodo.13893419" target="_blank">NasalSeg · DOI 10.5281/zenodo.13893419 ↗</a></aside></main>`;
+// Bundled dataset surfaces; path and shading are visualization aids, not a surgical plan.
+const VERSION = '0.4.2';
+const $ = id => document.getElementById(id);
+const state = { ready:false, mode:'scope', depth:0, yaw:0, pitch:0, angled:false, instrument:false, frames:0, travel:0, error:null, skullReady:false };
+const errors = [];
+let renderer, scene, camera, controls, nasal, skull;
+let nasalRoot, skullRoot, teachingRoot, routeLine, marker, instrument;
+let drag=null, held=0, holdTimer=null, lastFrame=0;
+const route = new THREE.CatmullRomCurve3(routeData.points.map(p=>new THREE.Vector3(...p)),false,'centripetal');
+const groups = {};
 
-const canvas=document.querySelector('#view'),renderer=new THREE.WebGLRenderer({canvas,antialias:true});
-renderer.setPixelRatio(Math.min(devicePixelRatio,1.7));renderer.setClearColor(0x02070b);renderer.outputColorSpace=THREE.SRGBColorSpace;
-const scene=new THREE.Scene();scene.fog=new THREE.FogExp2(0x02070b,.025);
-const camera=new THREE.PerspectiveCamera(76,1,.01,1000);scene.add(camera);
-camera.add(new THREE.PointLight(0xfff1dc,5,30,2));scene.add(new THREE.HemisphereLight(0x89b8c5,0x2b1010,1.0));
-const root=new THREE.Group();scene.add(root);
-let depth=0, viewMode='scope', yaw=0,pitch=0,drag=null,realLoaded=false,optic30=false,instrumentOn=false;
-const structureUI=document.querySelector('#structures');
-const phases=[
- {name:'Nasal entry',at:.06,target:'Nasal vestibule',hint:'Orient to the nasal corridor; avoid forcing the camera against the wall.'},
- {name:'Nasal corridor',at:.28,target:'Nasal cavity',hint:'Maintain a centered endoscopic path and identify the nasal cavity.'},
- {name:'Posterior corridor',at:.50,target:'Posterior choana',hint:'Recognize the posterior transition before turning toward the sphenoid target.'},
- {name:'Sphenoid target',at:.66,target:'Sphenoid corridor',hint:'Educational reconstruction begins here; identify the sphenoid target.'},
- {name:'Sphenoid sinus',at:.80,target:'Sphenoid sinus',hint:'Orient to the reconstructed sellar face and lateral carotid danger zones.'},
- {name:'Sellar face',at:.92,target:'Sellar face',hint:'Identify sellar face; maintain awareness of ICA and optic danger zones.'}
-];
-let found=new Set(),safetyEvents=0,pathLength=0,lastDepth=0;
-const structures=[
- ['skull','CT skull reference','real'],['nasal','Nasal cavities','real'],['pharynx','Nasopharynx','real'],['sphenoid','Sphenoid sinus','recon'],['sella','Sellar face','recon'],['ica','Paraclival ICA','recon'],['optic','Optic apparatus','recon'],['pituitary','Pituitary / lesion','recon']
-];
-structureUI.innerHTML=structures.map(([id,n,k])=>`<button data-id="${id}"><i class="${k}"></i>${n}<span>◎</span></button>`).join('');
-const groups={}; structures.forEach(([id])=>groups[id]=new THREE.Group(),root.add(groups[id]));
+$('app').innerHTML = `
+<header><div class="brand">STR-X <span>/</span> TSS LAB<small>RENDER & NAVIGATION FIX · v${VERSION}</small></div><div class="header-note">Dataset geometry. Transparent provenance.</div></header>
+<main>
+ <section class="workspace" aria-label="Interactive anatomy workspace">
+  <div id="stage">
+   <canvas id="view" tabindex="0" aria-label="3D anatomy view. Drag to look. W advances and S withdraws."></canvas>
+   <div id="vignette"></div>
+   <div class="hud"><span id="modeLabel">NASAL ENDOSCOPE · <b id="optic">0°</b></span><span id="assetState" role="status">Loading NasalSeg P001…</span></div>
+   <div class="crosshair" aria-hidden="true">+</div>
+   <div id="loadPanel" role="status"><div class="load-card"><span class="eyebrow">ANATOMY VIEWER</span><h2 id="loadTitle">Loading the CT-derived surface</h2><p id="loadText">The nasal model is bundled with this application. Navigation unlocks after it loads.</p><button id="retry" hidden>Retry loading</button></div></div>
+   <div class="scene-caption"><span id="sceneSource">NasalSeg P001 · visualization path, not a surgical plan</span><span id="renderState">Starting renderer</span></div>
+  </div>
+  <div class="navigation">
+   <div class="nav-row"><button id="withdraw" class="nav-button" disabled>← Withdraw</button><div class="position"><strong id="depth">0%</strong><span id="region">Anterior nasal model</span></div><button id="advance" class="nav-button primary" disabled>Advance →</button></div>
+   <label class="range-label" for="depthSlider">Position along visualization path</label><input id="depthSlider" type="range" min="0" max="1000" value="0" disabled aria-label="Position along visualization path">
+   <p class="hint">Click to step · hold to move · drag to look · W / S on keyboard</p>
+  </div>
+ </section>
+ <aside>
+  <span class="eyebrow">EXPLORE THE MODEL</span><h1>Visible anatomy.<br>Responsive navigation.</h1>
+  <p id="note">The nasal cavities and nasopharynx are one CT-segmentation surface from NasalSeg case P001. Start inside the model and use Advance or Withdraw.</p>
+  <div class="modes" aria-label="Anatomy views"><button data-mode="scope" class="active" disabled>Endoscope</button><button data-mode="atlas" disabled>Nasal atlas</button><button data-mode="skull" disabled>Skull reference</button><button data-mode="teaching" disabled>Sellar illustration</button></div>
+  <h3>VIEW CONTROLS</h3><div class="tools"><button id="angle" disabled>Optics: 0°</button><button id="instrument" disabled>Show instrument</button><button id="recenter" disabled>Re-center view</button><button id="reset" disabled>Reset route</button></div>
+  <div class="metrics"><div><small>MODEL STATUS</small><b id="modelState">Loading</b></div><div><small>VIRTUAL TRAVEL</small><b id="travel">0.00 units</b></div></div>
+  <div class="notice"><b id="coachTitle">A viewing path, not a surgical route</b><p id="coach">No movement is scored as surgical skill. The path is fitted to the bundled surface to keep anatomy in view. It requires expert review before educational validation.</p></div>
+  <details><summary>Source data & limitations</summary><p>NasalSeg P001: bundled nasal cavities + nasopharynx. Shading is illustrative, not recorded endoscopic imagery. The earlier export does not preserve verified patient orientation.</p><p>SPL skull: a separate CT atlas subject, shown in a separate view. It is not registered to P001.</p><p>Sellar illustration: synthetic sphenoid/sellar, ICA, optic and pituitary objects. It is not a continuation of the CT-derived nasal route.</p><p><a href="https://doi.org/10.5281/zenodo.13893419" target="_blank" rel="noreferrer">NasalSeg source ↗</a> · <a href="https://www.openanatomy.org/atlas-pages/atlas-spl-head-and-neck.html" target="_blank" rel="noreferrer">SPL source ↗</a></p></details>
+  <p class="disclaimer">RESEARCH PROTOTYPE · Not for clinical decisions, surgical planning, or credentialing. Desktop/touch navigation is tested separately from headset VR.</p>
+ </aside>
+</main>`;
 
-function mat(color,rough=.65,opacity=1){return new THREE.MeshStandardMaterial({color,roughness:rough,metalness:0,side:THREE.DoubleSide,transparent:opacity<1,opacity});}
-function tube(group,pts,r,color){const curve=new THREE.CatmullRomCurve3(pts.map(p=>new THREE.Vector3(...p)));group.add(new THREE.Mesh(new THREE.TubeGeometry(curve,64,r,14,false),mat(color,.5)));}
-function recon(){
- const bone=mat(0xd7bd8d,.82,.76), muc=mat(0xa85457,.78,.82), gland=mat(0xd19a72,.72), tumor=mat(0x9a76bd,.68);
- const sph=new THREE.Mesh(new THREE.SphereGeometry(2.8,36,24),muc);sph.scale.set(1.2,.72,1);sph.position.set(0,0,-13);groups.sphenoid.add(sph);
- const sell=new THREE.Mesh(new THREE.BoxGeometry(3.7,2.6,.35),bone);sell.position.set(0,.1,-16);groups.sella.add(sell);
- tube(groups.ica,[[-2.15,-1,-18],[-2.05,-.2,-16.8],[-2.25,.7,-16],[-1.95,1.5,-17]],.25,0xd7434d);tube(groups.ica,[[2.15,-1,-18],[2.05,-.2,-16.8],[2.25,.7,-16],[1.95,1.5,-17]],.25,0xd7434d);
- tube(groups.optic,[[-2,2,-17],[-.7,1.9,-16.5],[0,1.8,-16],[.7,1.9,-16.5],[2,2,-17]],.18,0xe7d27a);
- const pit=new THREE.Mesh(new THREE.SphereGeometry(1.25,32,20),gland);pit.scale.y=.75;pit.position.set(-.2,0,-16.7);groups.pituitary.add(pit);
- const les=new THREE.Mesh(new THREE.SphereGeometry(.75,28,18),tumor);les.position.set(.45,.25,-16.35);groups.pituitary.add(les);
- Object.values(groups).forEach(g=>g.children.forEach(o=>o.userData.provenance='reconstruction'));
-} recon();
-
-const loader=new GLTFLoader();
-
-renderer.xr.enabled=true;
-if(navigator.xr){const vr=VRButton.createButton(renderer);vr.id='vr';document.querySelector('#stage').appendChild(vr);}
-const instrument=new THREE.Group();camera.add(instrument);
-const shaft=new THREE.Mesh(new THREE.CylinderGeometry(.018,.018,2.5,12),new THREE.MeshStandardMaterial({color:0xbfc9ce,metalness:.85,roughness:.2}));
-shaft.rotation.x=Math.PI/2;shaft.position.set(.34,-.25,-1.4);instrument.add(shaft);instrument.visible=false;
-
-loader.load('/assets/spl-skull.glb',g=>{
- const model=g.scene;model.traverse(o=>{if(o.isMesh){o.material=new THREE.MeshStandardMaterial({color:0xd8c39d,roughness:.82,transparent:true,opacity:.20,side:THREE.DoubleSide});o.userData.provenance='SPL Head & Neck Atlas';}});
- const box=new THREE.Box3().setFromObject(model),size=box.getSize(new THREE.Vector3()),center=box.getCenter(new THREE.Vector3()),scale=22/Math.max(size.x,size.y,size.z);model.position.copy(center).multiplyScalar(-1);const holder=new THREE.Group();holder.add(model);holder.scale.setScalar(scale);holder.rotation.set(-Math.PI/2,0,Math.PI);holder.position.set(0,0,-7);groups.skull.add(holder);
-},undefined,()=>{document.querySelector('#note').textContent+=' CT skull asset is still building; refresh after the data workflow completes.';});
-
-loader.load('/assets/nasalseg-case.glb',g=>{
- const model=g.scene;model.traverse(o=>{if(o.isMesh){o.material=mat(0xb65f61,.82,.72);o.userData.provenance='NasalSeg';}});
- // Pipeline exports centered millimeter geometry; normalize long axis to endoscopic Z.
- const box=new THREE.Box3().setFromObject(model),size=box.getSize(new THREE.Vector3()),center=box.getCenter(new THREE.Vector3());
- const longest=Math.max(size.x,size.y,size.z),scale=18/longest;model.position.copy(center).multiplyScalar(-1);
- // Parent transform preserves CT proportions while correctly applying centering in scaled coordinates.
- const holder=new THREE.Group();holder.add(model);holder.scale.setScalar(scale);holder.rotation.set(-Math.PI/2,0,Math.PI);holder.position.set(0,0,-5);
- groups.nasal.add(holder);realLoaded=true;document.querySelector('#assetState').textContent='NASALSEG P001 · CT MESH LOADED';
-},undefined,()=>{
- document.querySelector('#assetState').textContent='CT MESH LOAD ERROR';
- document.querySelector('#note').textContent='The real NasalSeg asset is being generated by the repository data pipeline. Deep anatomy remains a reconstruction.';
- // Anatomically shaped fallback only until the workflow commits the real mesh.
- const fallback=new THREE.Mesh(new THREE.CapsuleGeometry(1.65,10,16,28),mat(0xa9575b,.85,.62));fallback.rotation.x=Math.PI/2;fallback.position.z=-5;groups.nasal.add(fallback);
-});
-
-function resize(){const r=canvas.getBoundingClientRect();renderer.setSize(r.width,r.height,false);camera.aspect=r.width/r.height;camera.updateProjectionMatrix()} new ResizeObserver(resize).observe(canvas);
-function region(d){return d<.2?'Nasal vestibule':d<.42?'Nasal cavity':d<.58?'Posterior choana':d<.72?'Sphenoid corridor':d<.86?'Sphenoid sinus':d<.94?'Sellar face':'Sellar compartment'}
-function updateCamera(){
- document.querySelector('#depth').textContent=Math.round(depth*100)+'%';document.querySelector('#region').textContent=region(depth);
- if(viewMode==='scope'){camera.fov=76;camera.position.set(Math.sin(yaw)*.5,Math.sin(pitch)*.4,4-depth*21);camera.lookAt(camera.position.x+Math.sin(yaw)+(optic30?.5:0),camera.position.y+Math.sin(pitch)+(optic30?.12:0),camera.position.z-5);document.querySelector('.scope').style.display='block';}
- else{camera.fov=45;camera.position.set(18*Math.sin(yaw+.75),8+pitch*6,5+18*Math.cos(yaw+.75));camera.lookAt(0,0,-7);document.querySelector('.scope').style.display='none';}
- camera.updateProjectionMatrix();
- groups.sphenoid.visible=depth>.56||viewMode==='atlas';groups.sella.visible=depth>.72||viewMode==='atlas';groups.ica.visible=depth>.72||viewMode==='atlas';groups.optic.visible=depth>.78||viewMode==='atlas';groups.pituitary.visible=depth>.91||viewMode==='atlas';
+function reportError(error) {
+ const message=error instanceof Error ? error.message : String(error);
+ errors.push(message); state.error=message; state.ready=false; held=0; clearTimeout(holdTimer);
+ $('loadPanel').hidden=false;
+ $('loadTitle').textContent='The anatomy viewer could not start';
+ $('loadText').textContent=message+' Reload to retry. A failed load is not shown as an empty anatomy scene.';
+ $('retry').hidden=false; $('assetState').textContent='Viewer error — see details'; $('modelState').textContent='Unavailable';
+ document.querySelectorAll('.navigation button, .tools button, .modes button, #depthSlider').forEach(e=>e.disabled=true);
 }
-function move(v){const before=depth;depth=THREE.MathUtils.clamp(depth+v,0,1);document.querySelector('#assetState').textContent=realLoaded?'NASALSEG P001 · CT MESH LOADED':'ANATOMY ASSET NOT READY';pathLength+=Math.abs(depth-before)*21;document.querySelector('#pathScore').textContent=pathLength.toFixed(1);checkTraining();updateCamera()}
-function checkTraining(){
- const idx=phases.findIndex((p,i)=>depth>=p.at && (i===phases.length-1||depth<phases[i+1].at));
- const phase=phases[Math.max(0,idx)],coach=document.querySelector('#coach');
- if(phase){coach.querySelector('span').textContent=phase.hint;if(Math.abs(depth-phase.at)<.045)found.add(Math.max(0,idx));}
- // Proximity events are simulator danger-zone events, not validated collision physics.
- if(depth>.79){
-   const lateral=Math.abs(Math.sin(yaw)*1.7);
-   if(lateral>1.25 && !window.__dangerLatch){safetyEvents++;window.__dangerLatch=true;coach.classList.add('danger');coach.querySelector('span').textContent='Danger-zone proximity: reconstructed paraclival ICA. Re-center before advancing.';}
-   if(lateral<.9){window.__dangerLatch=false;coach.classList.remove('danger');}
+window.addEventListener('error',e=>reportError(e.error||e.message));
+window.addEventListener('unhandledrejection',e=>reportError(e.reason));
+$('retry').addEventListener('click',()=>location.reload());
+
+async function loadMesh(name,onProgress) {
+ const controller=new AbortController(); const timer=setTimeout(()=>controller.abort(),25000);
+ try {
+  const url=new URL(`${import.meta.env.BASE_URL}assets/${name}`,location.origin);
+  const response=await fetch(url,{signal:controller.signal});
+  if(!response.ok) throw new Error(`${name}: HTTP ${response.status}`);
+  const data=await response.arrayBuffer();
+  if(data.byteLength<20||new DataView(data).getUint32(0,true)!==0x46546c67) throw new Error(`${name}: server did not return a valid GLB anatomy file`);
+  onProgress?.();
+  const result=await new GLTFLoader().parseAsync(data,url.href.replace(/[^/]*$/,''));
+  let count=0;result.scene.traverse(o=>{if(o.isMesh)count++;});
+  if(!count)throw new Error(`${name}: no renderable surface found`);
+  return result.scene;
+ } catch(error) {
+  if(error.name==='AbortError')throw new Error(`${name}: download timed out after 25 seconds`);
+  throw error;
+ } finally {clearTimeout(timer);}
+}
+const material=color=>new THREE.MeshStandardMaterial({color,roughness:.58,metalness:0,side:THREE.DoubleSide});
+function resize() {
+ if(!renderer)return;
+ const {width,height}=$('stage').getBoundingClientRect();if(width<2||height<2)return;
+ renderer.setSize(width,height,false);camera.aspect=width/height;camera.updateProjectionMatrix();
+}
+function positionCamera() {
+ if(!camera)return;
+ if(state.mode==='scope') {
+  camera.fov=78;camera.position.copy(route.getPointAt(state.depth));
+  const tangent=route.getTangentAt(Math.min(.9999,state.depth)).normalize();
+  camera.up.set(0,1,0);camera.lookAt(camera.position.clone().add(tangent));
+  camera.rotateY(state.yaw);camera.rotateX(state.pitch+(state.angled?Math.PI/6:0));
+ } else if(state.mode==='teaching') {
+  camera.fov=66;camera.position.set(0,.1,7-state.depth*5);camera.lookAt(0,.1,-1);
+  camera.rotateY(state.yaw);camera.rotateX(state.pitch+(state.angled?Math.PI/6:0));
  }
- document.querySelector('#landmarkScore').textContent=found.size+' / '+phases.length;
- document.querySelector('#safetyScore').textContent=safetyEvents;
+ camera.updateProjectionMatrix();marker.position.copy(route.getPointAt(state.depth));
+ instrument.visible=state.instrument&&['scope','teaching'].includes(state.mode);
 }
-document.querySelector('#resetRun').onclick=()=>{depth=0;yaw=0;pitch=0;found.clear();safetyEvents=0;pathLength=0;window.__dangerLatch=false;document.querySelector('#landmarkScore').textContent='0 / 6';document.querySelector('#safetyScore').textContent='0';document.querySelector('#pathScore').textContent='0.0';document.querySelector('#coach').classList.remove('danger');checkTraining();updateCamera();};
-
-document.querySelector('#advance').onclick=()=>move(.025);document.querySelector('#withdraw').onclick=()=>move(-.025);document.querySelector('#angle').onclick=()=>{optic30=!optic30;document.querySelector('#optic').textContent=optic30?'30°':'0°';updateCamera()};document.querySelector('#instrument').onclick=()=>{instrumentOn=!instrumentOn;instrument.visible=instrumentOn};
-document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{viewMode=b.dataset.view;document.querySelectorAll('.tabs button').forEach(x=>x.classList.toggle('active',x===b));document.querySelector('#mode').textContent=viewMode==='scope'?'ENDOSCOPIC · 0°':'ATLAS · CUTAWAY';updateCamera()});
-structureUI.onclick=e=>{const b=e.target.closest('button');if(!b)return;const g=groups[b.dataset.id];g.visible=!g.visible;b.classList.toggle('off',!g.visible)};
-canvas.onpointerdown=e=>{drag=[e.clientX,e.clientY];canvas.setPointerCapture(e.pointerId)};canvas.onpointermove=e=>{if(!drag)return;yaw+= (e.clientX-drag[0])*.005;pitch=THREE.MathUtils.clamp(pitch-(e.clientY-drag[1])*.004,-.7,.7);drag=[e.clientX,e.clientY];updateCamera()};canvas.onpointerup=()=>drag=null;
-addEventListener('keydown',e=>{if(e.key.toLowerCase()==='w')move(.015);if(e.key.toLowerCase()==='s')move(-.015)});
-function loop(){renderer.render(scene,camera)}renderer.setAnimationLoop(loop);checkTraining();updateCamera();resize();
+function syncUI() {
+ $('depth').textContent=`${Math.round(state.depth*100)}%`;
+ $('depthSlider').value=Math.round(state.depth*1000);$('travel').textContent=`${state.travel.toFixed(2)} units`;
+ $('region').textContent=state.mode==='teaching'?'Synthetic sellar scene':state.depth<.25?'Anterior nasal model':state.depth<.72?'Mid-nasal model':'Posterior nasal model';
+ $('angle').textContent=state.angled?'Optics: 30°':'Optics: 0°';$('optic').textContent=state.angled?'30°':'0°';
+ $('instrument').textContent=state.instrument?'Hide instrument':'Show instrument';
+ $('advance').disabled=!state.ready||state.depth>=1;$('withdraw').disabled=!state.ready||state.depth<=0;
+ $('vignette').hidden=!['scope','teaching'].includes(state.mode);document.querySelector('.crosshair').hidden=!['scope','teaching'].includes(state.mode);
+ document.querySelectorAll('[data-mode]').forEach(b=>{b.classList.toggle('active',b.dataset.mode===state.mode);b.setAttribute('aria-pressed',String(b.dataset.mode===state.mode));});
+}
+function setDepth(value) {
+ if(!state.ready||!Number.isFinite(value))return;
+ if(['atlas','skull'].includes(state.mode))setMode('scope');
+ const next=THREE.MathUtils.clamp(value,0,1);
+ state.travel+=Math.abs(next-state.depth)*(state.mode==='scope'?route.getLength():5);state.depth=next;
+ positionCamera();syncUI();
+}
+function homeOrbit() {
+ controls.target.set(0,0,0);
+ if(state.mode==='skull')camera.position.set(13,8,17);else camera.position.set(8,5,11);
+ camera.fov=48;camera.lookAt(controls.target);camera.updateProjectionMatrix();controls.update();
+}
+async function ensureSkull() {
+ if(state.skullReady)return;
+ $('assetState').textContent='Loading separate SPL skull reference…';
+ try {
+  if(!skull) {
+   skull=await loadMesh('spl-skull.glb');
+   const box=new THREE.Box3().setFromObject(skull),center=box.getCenter(new THREE.Vector3());
+   skull.position.sub(center);skullRoot.scale.setScalar(12/box.getSize(new THREE.Vector3()).length()*Math.sqrt(3));
+   skullRoot.rotation.x=-Math.PI/2;
+   skull.traverse(o=>{if(o.isMesh)o.material=material(0xd6c6a7);});skullRoot.add(skull);
+  }
+  state.skullReady=true;
+  if(state.mode==='skull')$('assetState').textContent='SPL skull reference loaded · separate subject';
+ } catch(e) {
+  if(state.mode==='skull')setMode('atlas');
+  $('assetState').textContent='Skull unavailable; nasal view still works';
+  $('note').textContent=`Optional skull load failed: ${e.message}. Nasal navigation remains available.`;
+ }
+}
+function setMode(mode) {
+ if(!state.ready)return;
+ state.mode=mode;state.yaw=0;state.pitch=0;held=0;
+ nasalRoot.visible=mode==='scope'||mode==='atlas';skullRoot.visible=mode==='skull';teachingRoot.visible=mode==='teaching';
+ routeLine.visible=marker.visible=mode==='atlas';controls.enabled=mode==='atlas'||mode==='skull';
+ const labels={scope:'NASAL ENDOSCOPE',atlas:'NASAL ATLAS',skull:'SEPARATE SKULL REFERENCE',teaching:'SYNTHETIC SELLAR ILLUSTRATION'};
+ // Do not destroy the optic span when switching modes.
+ $('modeLabel').firstChild.textContent=`${labels[mode]} · `;
+ const text={scope:'NasalSeg P001 · visualization path, not a surgical plan',atlas:'Same nasal model · cyan line = illustrative camera path',skull:'SPL CT skull · different subject; not registered to P001',teaching:'All objects in this scene are synthetic, not CT-derived'};
+ $('sceneSource').textContent=text[mode];
+ $('assetState').textContent=mode==='teaching'?'Synthetic teaching scene':mode==='skull'?'SPL skull reference':'NasalSeg P001 · CT mesh loaded';
+ $('coachTitle').textContent=mode==='teaching'?'Illustration only — no validated danger zones':'A viewing path, not a surgical route';
+ if(controls.enabled)homeOrbit();if(mode==='skull')ensureSkull();
+ positionCamera();syncUI();
+}
+function buildTeachingScene() {
+ // Isolated schematic, not co-registered with the nasal case.
+ const ball=(id,position,scale,color)=>{const o=new THREE.Mesh(new THREE.SphereGeometry(1,32,20),material(color));o.position.set(...position);o.scale.set(...scale);groups[id].add(o);};
+ // Fixes the original fatal undefined-id error: creation AND add are inside the loop.
+ for(const id of ['sella','ica','optic','pituitary']){groups[id]=new THREE.Group();teachingRoot.add(groups[id]);}
+ ball('sella',[0,0,-1.3],[2.5,2,.15],0xd1b489);ball('pituitary',[0,0,-.9],[.85,.6,.3],0xc2878d);
+ const tube=(id,points,radius,color)=>{const curve=new THREE.CatmullRomCurve3(points.map(p=>new THREE.Vector3(...p)));groups[id].add(new THREE.Mesh(new THREE.TubeGeometry(curve,40,radius,12,false),material(color)));};
+ for(const s of [-1,1]) {
+  tube('ica',[[s*1.65,-1.5,-.7],[s*1.4,0,-.8],[s*1.65,1,-.9],[s*1.25,1.6,-1]],.17,0xba3544);
+  tube('optic',[[s*1.5,1.8,-.6],[s*.6,1.65,-.65],[0,1.55,-.7]],.12,0xdec88d);
+ }
+}
+async function boot() {
+ renderer=new THREE.WebGLRenderer({canvas:$('view'),antialias:true,alpha:false});
+ renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,1.6));renderer.setClearColor(0x08131d);
+ renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.15;
+ scene=new THREE.Scene();camera=new THREE.PerspectiveCamera(78,1,.002,200);scene.add(camera);
+ scene.add(new THREE.AmbientLight(0xffddd0,.6));
+ const fill=new THREE.DirectionalLight(0xcfe4ff,1.5);fill.position.set(5,8,8);scene.add(fill);
+ camera.add(new THREE.PointLight(0xffeadc,1.6,0,0));
+ nasalRoot=new THREE.Group();skullRoot=new THREE.Group();teachingRoot=new THREE.Group();scene.add(nasalRoot,skullRoot,teachingRoot);skullRoot.visible=teachingRoot.visible=false;
+ controls=new OrbitControls(camera,$('view'));controls.enableDamping=true;controls.enabled=false;controls.minDistance=.3;controls.maxDistance=50;
+ routeLine=new THREE.Line(new THREE.BufferGeometry().setFromPoints(route.getSpacedPoints(250)),new THREE.LineBasicMaterial({color:0x64f5d3,depthTest:false}));routeLine.renderOrder=5;
+ marker=new THREE.Mesh(new THREE.SphereGeometry(.12,16,12),new THREE.MeshBasicMaterial({color:0xffffcf,depthTest:false}));marker.renderOrder=6;
+ scene.add(routeLine,marker);routeLine.visible=marker.visible=false;
+ instrument=new THREE.Group();camera.add(instrument);instrument.visible=false;
+ const shaft=new THREE.Mesh(new THREE.CylinderGeometry(.009,.009,.48,14),new THREE.MeshStandardMaterial({color:0xc4d0d6,roughness:.22,metalness:.75}));shaft.rotation.x=Math.PI/2;shaft.position.set(.11,-.095,-.31);instrument.add(shaft);
+ buildTeachingScene();resize();new ResizeObserver(resize).observe($('stage'));
+ $('view').addEventListener('webglcontextlost',e=>{e.preventDefault();reportError(new Error('WebGL graphics context was lost. Reload this page to restore it.'));});
+ renderer.setAnimationLoop(time=>{
+  const dt=Math.min(.05,(time-(lastFrame||time))/1000);lastFrame=time;
+  if(state.ready&&held)setDepth(state.depth+held*dt*.1);
+  if(controls.enabled)controls.update();renderer.render(scene,camera);state.frames++;
+  if(state.frames%60===0)$('renderState').textContent='3D renderer active';
+ });
+ nasal=await loadMesh('nasalseg-case.glb',()=>$('assetState').textContent='Preparing nasal surface…');
+ nasal.traverse(o=>{if(o.isMesh){o.material=material(0xad6864);o.geometry.computeVertexNormals();}});
+ // Route and mesh must share the same transform; do not independently normalize either.
+ nasalRoot.rotation.x=routeData.transform.rotationX;nasalRoot.scale.setScalar(routeData.transform.scale);nasalRoot.add(nasal);
+ state.ready=true;document.querySelectorAll('.modes button, .tools button, #depthSlider').forEach(e=>e.disabled=false);
+ $('modelState').textContent='CT mesh loaded';setMode('scope');renderer.render(scene,camera);
+ $('loadPanel').hidden=true;$('renderState').textContent='3D renderer active';
+}
+function bindMove(id,direction) {
+ const button=$(id);
+ button.addEventListener('click',()=>setDepth(state.depth+direction*.025));
+ button.addEventListener('pointerdown',e=>{if(!state.ready||button.disabled)return;button.setPointerCapture(e.pointerId);holdTimer=setTimeout(()=>{held=direction;},300);});
+ const stop=()=>{held=0;clearTimeout(holdTimer);};
+ button.addEventListener('pointerup',stop);button.addEventListener('pointercancel',stop);button.addEventListener('lostpointercapture',stop);
+}
+bindMove('advance',1);bindMove('withdraw',-1);
+$('depthSlider').addEventListener('input',e=>setDepth(Number(e.target.value)/1000));
+document.querySelectorAll('[data-mode]').forEach(b=>b.addEventListener('click',()=>setMode(b.dataset.mode)));
+$('angle').addEventListener('click',()=>{state.angled=!state.angled;positionCamera();syncUI();});
+$('instrument').addEventListener('click',()=>{state.instrument=!state.instrument;positionCamera();syncUI();});
+$('recenter').addEventListener('click',()=>{state.yaw=0;state.pitch=0;if(controls.enabled)homeOrbit();else positionCamera();});
+$('reset').addEventListener('click',()=>{state.depth=0;state.travel=0;state.yaw=0;state.pitch=0;state.angled=false;setMode('scope');});
+$('view').addEventListener('pointerdown',e=>{if(!state.ready||controls.enabled)return;$('view').focus();$('view').setPointerCapture(e.pointerId);drag=[e.clientX,e.clientY];});
+$('view').addEventListener('pointermove',e=>{if(!drag||!state.ready||controls.enabled)return;state.yaw=THREE.MathUtils.clamp(state.yaw-(e.clientX-drag[0])*.004,-.9,.9);state.pitch=THREE.MathUtils.clamp(state.pitch-(e.clientY-drag[1])*.004,-.7,.7);drag=[e.clientX,e.clientY];positionCamera();});
+for(const event of ['pointerup','pointercancel','lostpointercapture'])$('view').addEventListener(event,()=>drag=null);
+window.addEventListener('keydown',e=>{if(!state.ready||/INPUT|TEXTAREA|SELECT/.test(e.target.tagName))return;if(['w','s'].includes(e.key.toLowerCase())){e.preventDefault();held=e.key.toLowerCase()==='w'?1:-1;}});
+window.addEventListener('keyup',e=>{if(['w','s'].includes(e.key.toLowerCase()))held=0;});
+window.addEventListener('blur',()=>{held=0;drag=null;clearTimeout(holdTimer);});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){held=0;clearTimeout(holdTimer);}});
+// Read-only browser-test diagnostics: no patient data or hidden movement controls.
+window.__tss={snapshot:()=>({version:VERSION,ready:state.ready,mode:state.mode,depth:state.depth,frames:state.frames,skullReady:state.skullReady,camera:camera?.position.toArray(),errors:[...errors]})};
+boot().catch(reportError);

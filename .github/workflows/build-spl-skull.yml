@@ -2,8 +2,13 @@ name: Build SPL skull asset
 on:
   workflow_dispatch:
   push:
-    paths: ["scripts/build_spl_skull.py"]
-permissions: {contents: write}
+    branches: [main]
+    paths: ['scripts/build_spl_skull.py']
+permissions:
+  contents: write
+concurrency:
+  group: spl-skull-assets
+  cancel-in-progress: false
 jobs:
   build:
     if: github.actor != 'github-actions[bot]'
@@ -11,15 +16,20 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
       - uses: actions/setup-python@v5
-        with: {python-version: "3.12"}
+        with:
+          python-version: '3.12'
       - run: pip install numpy trimesh vtk fast-simplification
       - run: python scripts/build_spl_skull.py
       - name: Commit derived atlas asset
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add public/assets/spl-skull.glb public/assets/spl-skull.json
-          git diff --cached --quiet || git commit -m "data: add CT-derived SPL skull mesh"
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'data: add CT-derived SPL skull mesh'
           git pull --rebase origin main
-git push
+          git push origin HEAD:main

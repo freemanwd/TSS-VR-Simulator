@@ -19,45 +19,16 @@ jobs:
           python-version: '3.12'
       - run: npm install --no-audit --no-fund
       - run: npm run build
-      - run: pip install playwright trimesh numpy
+      - run: pip install playwright numpy pillow
       - run: python -m playwright install --with-deps chromium
-      - name: Diagnose original rendering and collect source assets
+      - name: Verify actual rendered navigation
         run: |
-          mkdir -p browser-results
-          python - <<'PY'
-          import json, subprocess, time
-          from pathlib import Path
-          import trimesh
-          from playwright.sync_api import sync_playwright
-          for name in ['nasalseg-case','spl-skull']:
-              scene=trimesh.load('public/assets/'+name+'.glb')
-              print('GEOMETRY',name,'bounds',scene.bounds.tolist())
-          server=subprocess.Popen(['python','-m','http.server','4173','--directory','dist'])
-          time.sleep(2)
-          with sync_playwright() as p:
-              browser=p.chromium.launch(headless=True,args=['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader'])
-              page=browser.new_page(viewport={'width':1280,'height':900})
-              errors=[]
-              page.on('pageerror',lambda error:errors.append(str(error)))
-              page.goto('http://127.0.0.1:4173',wait_until='networkidle')
-              page.wait_for_timeout(2000)
-              page.screenshot(path='browser-results/before.png')
-              page.locator('#advance').click()
-              page.wait_for_timeout(500)
-              print('ORIGINAL_DIAGNOSIS',json.dumps({'errors':errors,'depth':page.locator('#depth').inner_text(),'status':page.locator('#assetState').inner_text()}))
-              try:
-                  page.goto('https://tss-vr-simulator.vercel.app',wait_until='networkidle',timeout=45000)
-                  page.screenshot(path='browser-results/live-before.png')
-                  print('LIVE',page.title(),page.locator('body').inner_text()[:600],errors)
-              except Exception as e:
-                  print('LIVE_CHECK_UNAVAILABLE',str(e))
-              browser.close()
-          server.terminate()
-          PY
-          tar -czf browser-results/debug-bundle.tar.gz src public index.html package.json package-lock.json vercel.json node_modules
+          python -m http.server 4173 --directory dist >/tmp/tss-http.log 2>&1 &
+          sleep 2
+          python browser-test.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: browser-results
           path: browser-results
-          retention-days: 3
+          retention-days: 7

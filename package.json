@@ -1,10 +1,10 @@
 {
   "name": "tss-vr-simulator",
-  "version": "0.2.0",
+  "version": "0.4.2",
   "private": true,
-  "description": "CT-derived browser TSS anatomy research simulator",
+  "description": "Dataset-derived nasal anatomy visualization research prototype",
   "scripts": {"dev":"vite","build":"vite build","preview":"vite preview"},
-  "dependencies": {"three":"^0.180.0"},
-  "devDependencies": {"vite":"^7.1.7"},
-  "engines": {"node":">=20"}
+  "dependencies": {"three":"0.180.0"},
+  "devDependencies": {"vite":"7.3.6"},
+  "engines": {"node":">=22.12.0"}
 }
