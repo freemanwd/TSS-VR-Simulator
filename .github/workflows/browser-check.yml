@@ -44,8 +44,8 @@ jobs:
               success=False
               for attempt in range(24):
                   try:
-                      page.goto('https://tss-vr-simulator.vercel.app/?verify=0.4.2',wait_until='networkidle',timeout=25000)
-                      page.wait_for_function('window.__tss?.snapshot().version === "0.4.2" && window.__tss.snapshot().ready',timeout=15000)
+                      page.goto('https://tss-vr-simulator.vercel.app/?verify=0.4.3',wait_until='networkidle',timeout=25000)
+                      page.wait_for_function('window.__tss?.snapshot().version === "0.4.3" && window.__tss.snapshot().ready',timeout=15000)
                       print('PRODUCTION_READY',page.evaluate('__tss.snapshot()'))
                       success=True
                       break

@@ -1,3 +1,11 @@
+## v0.4.3 — Right-side control repairs
+
+- Mode-aware optics/instrument controls with visible availability guidance
+- Always-visible illustrative instrument guide; full route/tool reset
+- Stable overview re-centering and interrupted-motion cleanup
+- Coalesced optional skull loading with recoverable failure
+- Rendered-pixel regression coverage for all controls, narrow phones, touch drags and repeated transitions
+
 # v0.4.2 — Rendering and navigation repair
 
 The previous release stopped with `ReferenceError: id is not defined` during group initialization. This occurred before GLB loading, rendering, or button wiring. A successful Vite/Vercel build did not test this runtime behavior.

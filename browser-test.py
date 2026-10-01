@@ -41,6 +41,18 @@ def control_checks(page,prefix,touch=False):
  def click(selector):
   if touch:page.locator(selector).tap()
   else:page.locator(selector).click()
+ def drag_view(dx,dy):
+  page.locator('#view').scroll_into_view_if_needed()
+  box=page.locator('#view').bounding_box()
+  x,y=box['x']+box['width']/2,box['y']+box['height']/2
+  if touch:
+   session=page.context.new_cdp_session(page)
+   session.send('Input.dispatchTouchEvent',{'type':'touchStart','touchPoints':[{'x':x,'y':y}]})
+   for i in range(1,9):
+    session.send('Input.dispatchTouchEvent',{'type':'touchMove','touchPoints':[{'x':x+dx*i/8,'y':y+dy*i/8}]})
+   session.send('Input.dispatchTouchEvent',{'type':'touchEnd','touchPoints':[]});session.detach()
+  else:
+   page.mouse.move(x,y);page.mouse.down();page.mouse.move(x+dx,y+dy,steps=8);page.mouse.up()
  click('#reset');page.wait_for_timeout(200)
  original=shot(page,prefix+'-controls-start')
  click('#angle');page.wait_for_timeout(200)
@@ -57,9 +69,7 @@ def control_checks(page,prefix,touch=False):
  click('#instrument');page.wait_for_timeout(150)
  assert difference(original,shot(page,prefix+'-guide-hidden'))<.01
  # Re-center after a real pointer drag must restore the endoscopic heading.
- box=page.locator('#view').bounding_box()
- page.mouse.move(box['x']+box['width']/2,box['y']+box['height']/2)
- page.mouse.down();page.mouse.move(box['x']+box['width']/2+70,box['y']+box['height']/2+30,steps=8);page.mouse.up()
+ drag_view(70,30)
  page.wait_for_timeout(150)
  assert difference(original,shot(page,prefix+'-look-away'))>.02
  click('#recenter');page.wait_for_timeout(150)
@@ -72,15 +82,17 @@ def control_checks(page,prefix,touch=False):
   assert page.locator('#angle').is_disabled() and page.locator('#instrument').is_disabled()
   assert 'Endoscope and Sellar illustration' in page.locator('#controlHelp').inner_text()
   home=shot(page,prefix+'-'+mode+'-home')
-  box=page.locator('#view').bounding_box()
-  page.mouse.move(box['x']+box['width']/2,box['y']+box['height']/2)
-  page.mouse.down();page.mouse.move(box['x']+box['width']/2+100,box['y']+box['height']/2+30,steps=8);page.mouse.up()
+  drag_view(100,30)
   page.wait_for_timeout(350)
   assert difference(home,shot(page,prefix+'-'+mode+'-rotated'))>.01
   click('#recenter');page.wait_for_timeout(350)
   assert difference(home,shot(page,prefix+'-'+mode+'-recentered'))<.01
  click('[data-mode=teaching]');page.wait_for_timeout(200)
  teaching=shot(page,prefix+'-teaching-home')
+ drag_view(70,30);page.wait_for_timeout(150)
+ assert difference(teaching,shot(page,prefix+'-teaching-look-away'))>.02
+ click('#recenter');page.wait_for_timeout(150)
+ assert difference(teaching,shot(page,prefix+'-teaching-recentered'))<.01
  assert page.locator('#angle').is_enabled() and page.locator('#instrument').is_enabled()
  click('#angle');page.wait_for_timeout(150)
  assert difference(teaching,shot(page,prefix+'-teaching-angled'))>.02
@@ -105,7 +117,7 @@ with sync_playwright() as p:
  try:
   page=browser.new_page(viewport={'width':1280,'height':900})
   errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
-  ready(page);assert page.evaluate('__tss.snapshot().version')=='0.4.2'
+  ready(page);assert page.evaluate('__tss.snapshot().version')=='0.4.3'
   move_checks(page,'desktop');control_checks(page,'desktop')
   for value in [250,500,750,1000]:
    page.locator('#depthSlider').evaluate('(e,v)=>{e.value=v;e.dispatchEvent(new Event("input",{bubbles:true}));}',value)

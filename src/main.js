@@ -5,7 +5,7 @@ import routeData from './nasal-route.json';
 import './style.css';
 
 // Bundled dataset surfaces; path and shading are visualization aids, not a surgical plan.
-const VERSION = '0.4.2';
+const VERSION = '0.4.3';
 const $ = id => document.getElementById(id);
 const state = { ready:false, mode:'scope', depth:0, yaw:0, pitch:0, angled:false, instrument:false, frames:0, travel:0, error:null, skullReady:false };
 const errors = [];
