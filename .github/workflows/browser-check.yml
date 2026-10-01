@@ -1,7 +1,7 @@
 name: Browser navigation check
 on:
   push:
-    branches: [main, 'fix/visible-navigation']
+    branches: [main, 'fix/visible-navigation', 'fix/right-side-controls']
   workflow_dispatch:
 permissions:
   contents: read
