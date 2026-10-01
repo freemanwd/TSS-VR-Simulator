@@ -141,12 +141,14 @@ with sync_playwright() as p:
   page.locator('[data-mode=scope]').click();page.locator('#reset').click();page.screenshot(path=str(OUT/'desktop-full.png'))
   assert not errors,errors
   report['checks'].append({'name':'all route positions, angle after mode switch, hold, keyboard, atlas, skull, teaching','passed':True})
+  page.close()  # Do not keep software-rendered WebGL scenes running during later cases.
   mobile=browser.new_page(viewport={'width':390,'height':844},is_mobile=True,has_touch=True,device_scale_factor=1)
   mobile_errors=[];mobile.on('pageerror',lambda e:mobile_errors.append(str(e)))
   ready(mobile);move_checks(mobile,'mobile',True);control_checks(mobile,'mobile',True);mobile.screenshot(path=str(OUT/'mobile-full.png'),full_page=True)
   assert not mobile_errors,mobile_errors
+  mobile.close()
   narrow=browser.new_page(viewport={'width':320,'height':568},is_mobile=True,has_touch=True)
-  ready(narrow);control_checks(narrow,'small-mobile',True)
+  ready(narrow);control_checks(narrow,'small-mobile',True);narrow.close()
   optional=browser.new_page()
   optional.route('**/assets/spl-skull.glb',lambda route:route.fulfill(status=404,body='missing'))
   ready(optional);optional.locator('[data-mode=skull]').click()
@@ -156,9 +158,23 @@ with sync_playwright() as p:
   optional.locator('[data-mode=scope]').click();optional.locator('#advance').click()
   assert optional.evaluate('__tss.snapshot().depth')>0
   report['checks'].append({'name':'optional skull failure recovers without disabling nasal controls','passed':True})
+  optional.close()
   failure=browser.new_page()
-  failure.route('**/assets/nasalseg-case.glb',lambda route:route.fulfill(status=404,body='missing'))
-  failure.goto(BASE,wait_until='networkidle');failure.wait_for_selector('#retry:not([hidden])')
+  failure_details={'console_errors':[],'requests':[],'page_errors':[]}
+  failure.on('console',lambda msg:failure_details['console_errors'].append(msg.text) if msg.type=='error' else None)
+  failure.on('pageerror',lambda error:failure_details['page_errors'].append(str(error)))
+  def fail_anatomy(route):
+   failure_details['requests'].append(route.request.url)
+   route.fulfill(status=404,body='missing')
+  failure.route('**/assets/nasalseg-case.glb',fail_anatomy)
+  try:
+   failure.goto(BASE,wait_until='networkidle')
+   failure.wait_for_selector('#retry:not([hidden])',timeout=30000)
+   assert failure_details['requests'],'Critical anatomy fault was not injected'
+  finally:
+   failure_details.update({'url':failure.url,'title':failure.title(),'body':failure.locator('body').inner_text(),'snapshot':failure.evaluate('window.__tss?.snapshot() || null')})
+   (OUT/'asset-failure-diagnostics.json').write_text(json.dumps(failure_details,indent=2))
+   failure.screenshot(path=str(OUT/'asset-failure.png'))
   assert failure.locator('#advance').is_disabled()
   assert 'could not start' in failure.locator('#loadTitle').inner_text()
   failure.screenshot(path=str(OUT/'asset-failure.png'))
